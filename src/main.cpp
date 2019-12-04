@@ -28,6 +28,10 @@ const char *OTAauth = OTAAUTH;
 const char *mqttServer = "192.168.0.100";
 const int mqttPort = 1883;
 
+//status topic
+const char statusTopic[] = "home/meterkast/status";
+const char ipTopic[] = "home/meterkast/ip";
+
 WiFiClient espClient;               //wifi client for mqtt
 PubSubClient MQTTclient(espClient); // mqtt client
 unsigned long MqttReconnectAttempt = 0;
@@ -77,7 +81,7 @@ void setup()
   minuteTimestamp = currentMillis;
   liveTimestamp = currentMillis;
 }
-
+int i = 0;
 // the loop function runs over and over again forever
 void loop()
 {
@@ -107,9 +111,14 @@ void loop()
     { // for all sensors publish live data
       sensor.publishLiveData(MQTTclient);
     }
+
+    Serial.println(i);
+    i = 0;
   }
 
   ReadSensors();
+  i++;
+
   /*
   Serial.print("0,1000,2000,3000,");
   Serial.print(sensors[0].sensorData);
@@ -173,11 +182,13 @@ void ConnectToMQTT()
   if (currentMillis - MqttReconnectAttempt > 1000)
   {
     MqttReconnectAttempt = currentMillis;
-    if (MQTTclient.connect("ESPmeterkast"))
+    if (MQTTclient.connect("ESPmeterkast", statusTopic, 1, true, "offline"))
     {
-      MQTTclient.publish("outTopic", "hello world"); //todo connection topic / lastwill
+      //MQTTclient.publish("outTopic", "hello world"); //todo connection topic / lastwill
+      MQTTclient.publish(statusTopic, "online", true);
+      MQTTclient.publish(ipTopic, WiFi.localIP().toString().c_str(), true);
 
-      Serial.println("Reconnected to MQTT");
+      Serial.println("Connected to MQTT");
 
       MqttReconnectAttempt = 0;
     }
