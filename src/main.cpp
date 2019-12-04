@@ -5,20 +5,24 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
+#include <ArduinoOTA.h>
 #include <Sens.h>
 #include "credentials.h"
 
 // Function prototypes
 void ReadSensors();
 void ConnectToWifi();
-boolean ConnectToMQTT();
+void ConnectToMQTT();
 void MQTTcallback(char *topic, byte *payload, unsigned int length);
 void onDisconnect(const WiFiEventStationModeDisconnected &event);
 void onConnect(const WiFiEventStationModeConnected &event);
+void startOTA();
 
 //wifi credentials
 const char *ssid = STASSID;
 const char *password = STAPSK;
+
+const char *OTAauth = OTAAUTH;
 
 //mqtt credentials
 const char *mqttServer = "192.168.0.100";
@@ -37,7 +41,9 @@ SimpleSensor sensors[] =
     {
         //input sensors
         //SimpleSensor(16, 1000, 2000, (char *)"zon1", 3600000), //zon1
-        SimpleSensor(14, 1060, 1480, (char *)"water", 3600000) //water
+        //SimpleSensor(14, 1060, 1480, (char *)"water", 3600000) //water
+        SimpleSensor(12, 1000, 2000, (char *)"zon1", 3600000), //zon1
+        SimpleSensor(13, 1060, 1480, (char *)"water", 3600000) //water
                                                                //
 };
 
@@ -63,11 +69,9 @@ void setup()
   MQTTclient.setCallback(MQTTcallback);
 
   ConnectToWifi();
-  if (ConnectToMQTT())
-  {
-    MqttReconnectAttempt = 0;
-    Serial.println("Connected to MQTT");
-  }
+  ConnectToMQTT();
+
+  startOTA();
 
   currentMillis = millis();
   minuteTimestamp = currentMillis;
@@ -77,23 +81,11 @@ void setup()
 // the loop function runs over and over again forever
 void loop()
 {
-
   currentMillis = millis();
 
   if (!MQTTclient.connected())
   {
-    if (currentMillis - MqttReconnectAttempt > 1000)
-    {
-      MqttReconnectAttempt = currentMillis;
-      if (ConnectToMQTT())
-      {
-        MqttReconnectAttempt = 0;
-        Serial.println("Reconnected to MQTT");
-      }
-    }
-  }
-  else
-  {
+    ConnectToMQTT();
   }
 
   if (currentMillis - minuteTimestamp > 60 * 1000)
@@ -118,9 +110,14 @@ void loop()
   }
 
   ReadSensors();
-  //Serial.print("0,1000,2000,");
+  /*
+  Serial.print("0,1000,2000,3000,");
+  Serial.print(sensors[0].sensorData);
+  Serial.print(",");
+  Serial.println(sensors[1].sensorData);
   //Serial.println(sensors[0].sensorData);
-
+*/
+  ArduinoOTA.handle();
   MQTTclient.loop();
 }
 
@@ -171,18 +168,20 @@ void ConnectToWifi()
   Serial.println(WiFi.localIP());
 }
 
-boolean ConnectToMQTT()
+void ConnectToMQTT()
 {
-
-  if (MQTTclient.connect("ESPmeterkast"))
+  if (currentMillis - MqttReconnectAttempt > 1000)
   {
-    // Once connected, publish an announcement...
-    MQTTclient.publish("outTopic", "hello world"); //todo connection topic / lastwill
-    // ... and resubscribe
-    //client.subscribe("inTopic");
-  }
+    MqttReconnectAttempt = currentMillis;
+    if (MQTTclient.connect("ESPmeterkast"))
+    {
+      MQTTclient.publish("outTopic", "hello world"); //todo connection topic / lastwill
 
-  return MQTTclient.connected();
+      Serial.println("Reconnected to MQTT");
+
+      MqttReconnectAttempt = 0;
+    }
+  }
 }
 
 void MQTTcallback(char *topic, byte *payload, unsigned int length)
@@ -204,4 +203,16 @@ void onDisconnect(const WiFiEventStationModeDisconnected &event)
 
 void onConnect(const WiFiEventStationModeConnected &event)
 {
+}
+
+void startOTA()
+{
+  ArduinoOTA.setPasswordHash(OTAauth);
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA Ready");
 }
