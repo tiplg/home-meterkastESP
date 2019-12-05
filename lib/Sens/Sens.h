@@ -7,6 +7,8 @@
 class SimpleSensor
 {
 public:
+  SimpleSensor();
+  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout);
   SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller);
 
   int getSensorData();
@@ -14,10 +16,10 @@ public:
   void makeHigh();
   void makeInput();
   boolean checkInput();
-  void checkThreshold();
+  boolean checkThreshold();
   void publishMinuteData(PubSubClient MQTTclient);
   void publishLiveData(PubSubClient MQTTclient);
-  void handle();
+  boolean handle();
   void ISR();
 
   int sensorPin;
@@ -25,15 +27,13 @@ public:
   int thresholdSet;
   int thresholdReset;
   int timeout;
-  boolean attached;
-  boolean interrupted;
 
   int samples = 0;
 
   int sensorData;
   int sensorMin;
   int sensorMax;
-  bool armed;
+  boolean fired;
 
   int liveData;
   unsigned long liveTimestamp;
@@ -55,6 +55,44 @@ private:
   enum states state;
 
   long stateTime;
+};
+
+class DoubleSensor
+{
+public:
+  DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor);
+
+  void handle();
+
+  SimpleSensor leftSensor;
+  SimpleSensor rightSensor;
+
+  int sensorData;
+
+private:
+  enum directions
+  {
+    LEFT,
+    RIGHT
+  };
+
+  enum directions direction;
+
+  enum states
+  {
+    READY,
+    TRIGGERED,
+    TRIGGEREDLEFT,
+    TRIGGEREDRIGHT,
+    ARMED,
+    ARMEDLEFT,
+    ARMEDRIGHT,
+    FIRED,
+    FIREDLEFT,
+    FIREDRIGHT,
+  };
+
+  enum states state;
 };
 
 #endif

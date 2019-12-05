@@ -2,6 +2,36 @@
 #include "Sens.h"
 #include <PubSubClient.h>
 
+SimpleSensor::SimpleSensor()
+{
+}
+
+SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout)
+{
+  //get sensor settings
+  sensorPin = _pin;
+  thresholdSet = _thresholdSet;
+  thresholdReset = _thresholdReset;
+  timeout = _timeout;
+
+  breukTeller = 1000000; // Dummy value
+
+  //setup correct first state for handle()
+  makeHigh();
+  stateTime = micros();
+  state = MAKEINPUT;
+
+  // init all defaults
+  minuteData = 0;
+  sensorData = 0;
+  sensorMin = 9999;
+  sensorMax = 0;
+  fired = false;
+
+  //set current time
+  liveTimestamp = millis();
+}
+
 SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller)
 {
   //get sensor settings
@@ -31,7 +61,7 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
   sensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
-  armed = true;
+  fired = false;
 
   //set current time
   liveTimestamp = millis();
@@ -59,23 +89,25 @@ boolean SimpleSensor::checkInput()
   return !digitalRead(sensorPin);
 }
 
-void SimpleSensor::checkThreshold()
+boolean SimpleSensor::checkThreshold()
 {
-  if (armed && sensorData < thresholdSet)
+  boolean result = false;
+  if (!fired && sensorData < thresholdSet)
   {
-    armed = false;
+    result = true;
+    fired = true;
     minuteData++;
     digitalWrite(2, !digitalRead(2)); //TODO remove maybe
 
     interval = millis() - liveTimestamp;
-    liveData = breukTeller / interval;
+    //liveData = breukTeller / interval;
     liveTimestamp = millis();
 
     //Serial.println(liveData);
   }
-  else if (!armed && sensorData > thresholdReset)
+  else if (fired && sensorData > thresholdReset)
   {
-    armed = true;
+    fired = false;
   }
 
   if (sensorData > sensorMax)
@@ -83,10 +115,13 @@ void SimpleSensor::checkThreshold()
 
   if (sensorData < sensorMin)
     sensorMin = sensorData;
+
+  return result;
 }
 
-void SimpleSensor::handle()
+boolean SimpleSensor::handle()
 {
+  boolean result = false;
   long timeElapsed = micros() - stateTime;
   switch (state)
   {
@@ -106,26 +141,21 @@ void SimpleSensor::handle()
       samples++; //DEBUG
 
       sensorData = (timeElapsed > timeout) ? timeout : timeElapsed;
-      checkThreshold();
+      result = checkThreshold();
       makeHigh();
       stateTime = micros();
       state = MAKEINPUT;
     }
   }
-  default:
-    break;
   }
+
+  return result;
 }
 
 void SimpleSensor::publishMinuteData(PubSubClient MQTTclient)
 {
-  //FIXME remove prints
-  Serial.print("minuteData: ");
-  Serial.print(minuteData);
-  Serial.print("   sensorMax: ");
-  Serial.print(sensorMax);
-  Serial.print("   sensorMin: ");
-  Serial.println(sensorMin);
+  //DEBUG remove prints
+  Serial.printf("%s - minuteData: %i sensorMax: %i sensorMin: %i", sensorName, minuteData, sensorMax, sensorMin);
 
   //TODO add timestamp RTC
   //TODO if failed store data locally and push later
@@ -155,4 +185,88 @@ void SimpleSensor::publishLiveData(PubSubClient MQTTclient)
   }
 
   MQTTclient.publish(liveTopic, String(liveData).c_str());
+}
+
+DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor)
+{
+  leftSensor = _leftSensor;
+  rightSensor = _rightSensor;
+}
+
+void DoubleSensor::handle() //TODO this should be not that hard ?!
+{
+  leftSensor.handle();
+  rightSensor.handle();
+
+  switch (state)
+  {
+  case READY:
+    if (leftSensor.fired)
+    {
+      state = TRIGGERED;
+      direction = LEFT;
+    }
+    else if (rightSensor.fired)
+    {
+      state = TRIGGERED;
+      direction = RIGHT;
+    }
+    break;
+  case TRIGGERED:
+    if (leftSensor.fired && rightSensor.fired)
+    {
+      state = ARMED;
+    }
+    else if (!leftSensor.fired && !rightSensor.fired)
+    {
+      state = READY;
+    }
+    break;
+  case ARMED:
+    if (!leftSensor.fired && rightSensor.fired)
+    {
+      switch (direction)
+      {
+      case LEFT:
+        state = FIRED;
+        break;
+      case RIGHT:
+        state = TRIGGERED;
+        break;
+      }
+    }
+    else if (leftSensor.fired && !rightSensor.fired)
+    {
+      switch (direction)
+      {
+      case LEFT:
+        state = TRIGGERED;
+        break;
+      case RIGHT:
+        state = FIRED;
+        break;
+      }
+    }
+    break;
+  case FIRED:
+    if (!leftSensor.fired && !rightSensor.fired)
+    {
+      //ACTUAL DONE
+      if (direction)
+      {
+        Serial.println("FIRED LEFT!");
+      }
+      else
+      {
+        Serial.println("FIRED RIGHT!");
+      }
+
+      state = READY;
+    }
+    else if (leftSensor.fired && rightSensor.fired)
+    {
+      state = ARMED;
+    }
+    break;
+  }
 }

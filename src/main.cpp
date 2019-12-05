@@ -42,8 +42,10 @@ WiFiEventHandler mConnectHandler;
 //TODO reduce to minimum
 int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 
-SimpleSensor zonSensor = SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000);
-SimpleSensor waterSensor = SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000);
+//SimpleSensor zonSensor = SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000);
+//SimpleSensor waterSensor = SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000);
+
+DoubleSensor vermogen = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000), SimpleSensor(13, 1000, 2000, 3000));
 /*
 SimpleSensor sensors[] =
     {
@@ -100,17 +102,17 @@ void loop()
   {                            // Do every Second
     liveTimestamp += 1 * 1000; // add one second to current timestamp
 
-    zonSensor.publishLiveData(MQTTclient);
+    //zonSensor.publishLiveData(MQTTclient);
 
     //Serial.printf("samples: %i\n", zonSensor.samples);
-    zonSensor.samples = 0;
+    //zonSensor.samples = 0;
   }
 
   if (currentMillis - minuteTimestamp > 60 * 1000)
   {                               // Do every minute
     minuteTimestamp += 60 * 1000; // add one minute to current timestamp
 
-    zonSensor.publishMinuteData(MQTTclient);
+    //zonSensor.publishMinuteData(MQTTclient);
   }
 
   /*
@@ -120,13 +122,15 @@ void loop()
   Serial.println(sensors[1].sensorData);
   //Serial.println(sensors[0].sensorData);
 */
-  zonSensor.handle();
-  waterSensor.handle();
+  //zonSensor.handle();
+  //waterSensor.handle();
+
+  vermogen.handle();
 
   if (currentMillis % 50 < 2)
-    Serial.printf("0,1000,2000,3000,%i,%i\n", zonSensor.sensorData, waterSensor.sensorData);
+    //Serial.printf("0,1000,2000,3000,%i,%i\n", zonSensor.sensorData, waterSensor.sensorData);
 
-  ArduinoOTA.handle();
+    ArduinoOTA.handle();
   MQTTclient.loop();
 }
 
