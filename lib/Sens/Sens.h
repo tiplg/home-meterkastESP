@@ -7,19 +7,29 @@
 class SimpleSensor
 {
 public:
-  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, char _sensorName[], long _breukTeller);
+  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller);
+
+  int getSensorData();
 
   void makeHigh();
   void makeInput();
-  void checkInput(int ticks);
+  boolean checkInput();
   void checkThreshold();
   void publishMinuteData(PubSubClient MQTTclient);
   void publishLiveData(PubSubClient MQTTclient);
+  void handle();
+  void ISR();
 
   int sensorPin;
-  char sensorName[32];
+  char sensorName[];
   int thresholdSet;
   int thresholdReset;
+  int timeout;
+  boolean attached;
+  boolean interrupted;
+
+  int samples = 0;
+
   int sensorData;
   int sensorMin;
   int sensorMax;
@@ -33,6 +43,18 @@ public:
 
   long minuteData;
   char minuteTopic[32];
+
+private:
+  enum states
+  {
+    MAKEHIGH,
+    MAKEINPUT,
+    CHECKINPUT
+  };
+
+  enum states state;
+
+  long stateTime;
 };
 
 #endif
