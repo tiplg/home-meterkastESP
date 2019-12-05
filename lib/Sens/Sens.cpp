@@ -2,29 +2,44 @@
 #include "Sens.h"
 #include <PubSubClient.h>
 
-SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, char _sensorName[], long _breukTeller)
+SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller)
 {
-
+  //get sensor settings
   sensorPin = _pin;
   thresholdSet = _thresholdSet;
   thresholdReset = _thresholdReset;
+  timeout = _timeout;
   breukTeller = _breukTeller;
 
+  //generate minute topic
   strncpy(minuteTopic, "home/", 31);
   strncat(minuteTopic, _sensorName, 31);
   strncat(minuteTopic, "/minuteData", 31);
 
+  //generate live topic
   strncpy(liveTopic, "home/", 31);
   strncat(liveTopic, _sensorName, 31);
   strncat(liveTopic, "/liveData", 31);
 
+  //setup correct first state for handle()
+  makeHigh();
+  stateTime = micros();
+  state = MAKEINPUT;
+
+  // init all defaults
   minuteData = 0;
   sensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
   armed = true;
 
+  //set current time
   liveTimestamp = millis();
+}
+
+int SimpleSensor::getSensorData()
+{
+  return sensorData;
 }
 
 void SimpleSensor::makeHigh()
@@ -39,10 +54,9 @@ void SimpleSensor::makeInput()
   digitalWrite(sensorPin, LOW); // turn pullups off - or it won't work
 }
 
-void SimpleSensor::checkInput(int ticks)
+boolean SimpleSensor::checkInput()
 {
-  if (digitalRead(sensorPin))
-    sensorData = ticks;
+  return !digitalRead(sensorPin);
 }
 
 void SimpleSensor::checkThreshold()
@@ -69,6 +83,38 @@ void SimpleSensor::checkThreshold()
 
   if (sensorData < sensorMin)
     sensorMin = sensorData;
+}
+
+void SimpleSensor::handle()
+{
+  long timeElapsed = micros() - stateTime;
+  switch (state)
+  {
+  case MAKEINPUT:
+    if (timeElapsed > 100)
+    {
+      makeInput();
+      stateTime = micros();
+      state = CHECKINPUT;
+    }
+    break;
+  case CHECKINPUT:
+  {
+    long timeElapsed = micros() - stateTime;
+    if (timeElapsed > timeout || checkInput())
+    {
+      samples++; //DEBUG
+
+      sensorData = (timeElapsed > timeout) ? timeout : timeElapsed;
+      checkThreshold();
+      makeHigh();
+      stateTime = micros();
+      state = MAKEINPUT;
+    }
+  }
+  default:
+    break;
+  }
 }
 
 void SimpleSensor::publishMinuteData(PubSubClient MQTTclient)

@@ -39,17 +39,21 @@ unsigned long MqttReconnectAttempt = 0;
 WiFiEventHandler mDisConnectHandler;
 WiFiEventHandler mConnectHandler;
 
+//TODO reduce to minimum
 int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 
+SimpleSensor zonSensor = SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000);
+SimpleSensor waterSensor = SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000);
+/*
 SimpleSensor sensors[] =
     {
         //input sensors
         //SimpleSensor(16, 1000, 2000, (char *)"zon1", 3600000), //zon1
         //SimpleSensor(14, 1060, 1480, (char *)"water", 3600000) //water
-        SimpleSensor(12, 1000, 2000, (char *)"zon1", 3600000), //zon1
-        SimpleSensor(13, 1060, 1480, (char *)"water", 3600000) //water
-                                                               //
-};
+        SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000), //zon1
+        SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000) //water
+                                                                     //
+};*/
 
 unsigned long currentMillis = 0; // used for timing
 unsigned long minuteTimestamp = 0;
@@ -81,7 +85,7 @@ void setup()
   minuteTimestamp = currentMillis;
   liveTimestamp = currentMillis;
 }
-int i = 0;
+
 // the loop function runs over and over again forever
 void loop()
 {
@@ -92,32 +96,22 @@ void loop()
     ConnectToMQTT();
   }
 
-  if (currentMillis - minuteTimestamp > 60 * 1000)
-  {                               // Do every minute
-    minuteTimestamp += 60 * 1000; // add one minute to current timestamp
-
-    for (auto &sensor : sensors)
-    { // for all sensors publish minute data
-      //Serial.println(sensor.minuteData);
-      sensor.publishMinuteData(MQTTclient);
-    }
-  }
-
   if (currentMillis - liveTimestamp > 1 * 1000)
   {                            // Do every Second
     liveTimestamp += 1 * 1000; // add one second to current timestamp
 
-    for (auto &sensor : sensors)
-    { // for all sensors publish live data
-      sensor.publishLiveData(MQTTclient);
-    }
+    zonSensor.publishLiveData(MQTTclient);
 
-    Serial.println(i);
-    i = 0;
+    //Serial.printf("samples: %i\n", zonSensor.samples);
+    zonSensor.samples = 0;
   }
 
-  ReadSensors();
-  i++;
+  if (currentMillis - minuteTimestamp > 60 * 1000)
+  {                               // Do every minute
+    minuteTimestamp += 60 * 1000; // add one minute to current timestamp
+
+    zonSensor.publishMinuteData(MQTTclient);
+  }
 
   /*
   Serial.print("0,1000,2000,3000,");
@@ -126,38 +120,14 @@ void loop()
   Serial.println(sensors[1].sensorData);
   //Serial.println(sensors[0].sensorData);
 */
+  zonSensor.handle();
+  waterSensor.handle();
+
+  if (currentMillis % 50 < 2)
+    Serial.printf("0,1000,2000,3000,%i,%i\n", zonSensor.sensorData, waterSensor.sensorData);
+
   ArduinoOTA.handle();
   MQTTclient.loop();
-}
-
-void ReadSensors()
-{
-  for (auto &sensor : sensors)
-  {
-    sensor.makeHigh();
-  }
-
-  delayMicroseconds(100); // wait a  ms to make sure cap is discharged
-
-  for (auto &sensor : sensors)
-  {
-    sensor.makeInput();
-  }
-
-  for (int ticks = 0; ticks <= rcTickLimit; ticks++)
-  {
-    for (auto &sensor : sensors)
-    {
-      sensor.checkInput(ticks);
-    }
-  }
-
-  for (auto &sensor : sensors)
-  {
-    sensor.checkThreshold();
-  }
-
-  return;
 }
 
 void ConnectToWifi()
