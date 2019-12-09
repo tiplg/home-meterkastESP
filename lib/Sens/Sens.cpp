@@ -1,35 +1,10 @@
 #include "Arduino.h"
 #include "Sens.h"
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 SimpleSensor::SimpleSensor()
 {
-}
-
-SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout)
-{
-  //get sensor settings
-  sensorPin = _pin;
-  thresholdSet = _thresholdSet;
-  thresholdReset = _thresholdReset;
-  timeout = _timeout;
-
-  breukTeller = 1000000; // Dummy value
-
-  //setup correct first state for handle()
-  makeHigh();
-  stateTime = micros();
-  state = MAKEINPUT;
-
-  // init all defaults
-  minuteData = 0;
-  sensorData = 0;
-  sensorMin = 9999;
-  sensorMax = 0;
-  fired = false;
-
-  //set current time
-  liveTimestamp = millis();
 }
 
 SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller)
@@ -40,6 +15,8 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
   thresholdReset = _thresholdReset;
   timeout = _timeout;
   breukTeller = _breukTeller;
+
+  strncpy(sensorName, _sensorName, 31);
 
   //generate minute topic
   strncpy(minuteTopic, "home/", 31);
@@ -61,6 +38,7 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
   sensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
+  samples = 0;
   fired = false;
 
   //set current time
@@ -89,21 +67,17 @@ boolean SimpleSensor::checkInput()
   return !digitalRead(sensorPin);
 }
 
-boolean SimpleSensor::checkThreshold()
+void SimpleSensor::checkThreshold() //TODO back to void
 {
-  boolean result = false;
   if (!fired && sensorData < thresholdSet)
   {
-    result = true;
     fired = true;
     minuteData++;
+    statusData++;
     digitalWrite(2, !digitalRead(2)); //TODO remove maybe
 
     interval = millis() - liveTimestamp;
-    //liveData = breukTeller / interval;
     liveTimestamp = millis();
-
-    //Serial.println(liveData);
   }
   else if (fired && sensorData > thresholdReset)
   {
@@ -115,14 +89,22 @@ boolean SimpleSensor::checkThreshold()
 
   if (sensorData < sensorMin)
     sensorMin = sensorData;
-
-  return result;
 }
-
-boolean SimpleSensor::handle()
+int i = 0;
+boolean SimpleSensor::handle() //TODO rewirte to void   if time between handles is to high dont use sensorData
 {
-  boolean result = false;
-  long timeElapsed = micros() - stateTime;
+  long timeElapsed = micros() - stateTime; // this time interval is used for the states
+
+  if (micros() - handleTimestamp > MAXHANDLETIME) // if handle time is to long sensorData might not be acurate
+  {
+    invalid = true;
+  }
+  else
+  {
+    invalid = false;
+  }
+  handleTimestamp = micros();
+
   switch (state)
   {
   case MAKEINPUT:
@@ -138,38 +120,25 @@ boolean SimpleSensor::handle()
     long timeElapsed = micros() - stateTime;
     if (timeElapsed > timeout || checkInput())
     {
-      samples++; //DEBUG
+      if (!invalid) // if not invalid sensorData can be used to check thrersholds
+      {
+        sensorData = (timeElapsed > timeout) ? timeout : timeElapsed;
+        checkThreshold();
+      }
 
-      sensorData = (timeElapsed > timeout) ? timeout : timeElapsed;
-      result = checkThreshold();
       makeHigh();
       stateTime = micros();
       state = MAKEINPUT;
+      samples++; //DEBUG
     }
   }
   }
 
-  return result;
+  return !invalid;
 }
 
-void SimpleSensor::publishMinuteData(PubSubClient MQTTclient)
+int SimpleSensor::getLiveData()
 {
-  //DEBUG remove prints
-  Serial.printf("%s - minuteData: %i sensorMax: %i sensorMin: %i", sensorName, minuteData, sensorMax, sensorMin);
-
-  //TODO add timestamp RTC
-  //TODO if failed store data locally and push later
-  MQTTclient.publish(minuteTopic, String(minuteData).c_str());
-
-  //TODO send min/max sensor values MQTT
-  minuteData = 0;
-  sensorMin = 9999;
-  sensorMax = 0;
-}
-
-void SimpleSensor::publishLiveData(PubSubClient MQTTclient)
-{ // TODO improve for long intervals (minimum interval)
-
   unsigned long newInterval = millis() - liveTimestamp;
 
   if (newInterval > interval)
@@ -183,14 +152,67 @@ void SimpleSensor::publishLiveData(PubSubClient MQTTclient)
       liveData = breukTeller / newInterval;
     }
   }
+  else
+  {
+    liveData = breukTeller / interval;
+  }
 
-  MQTTclient.publish(liveTopic, String(liveData).c_str());
+  return liveData;
 }
 
-DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor)
+void SimpleSensor::addLiveDataToJson(JsonArray arr)
+{
+  JsonObject obj = arr.createNestedObject();
+  obj["sensorName"] = sensorName; //TODO make getter
+  obj["liveData"] = getLiveData();
+}
+
+void SimpleSensor::addMinuteDataToJson(JsonArray arr)
+{
+  JsonObject obj = arr.createNestedObject();
+  obj["sensorName"] = sensorName; //TODO make getter
+  obj["minuteData"] = minuteData;
+}
+
+void SimpleSensor::addStatusToJson(JsonArray arr)
+{
+  JsonObject obj = arr.createNestedObject();
+  obj["sensorName"] = sensorName; //TODO make getter
+  obj["sensorMin"] = sensorMin;
+  obj["sensorMax"] = sensorMax;
+  obj["samples"] = samples;
+
+  sensorMin = 9999;
+  sensorMax = 0;
+  samples = 0;
+}
+
+DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, char _sensorName[], long _breukTeller)
 {
   leftSensor = _leftSensor;
   rightSensor = _rightSensor;
+
+  breukTeller = _breukTeller;
+
+  //copy sensor name
+  strncpy(sensorName, _sensorName, 31);
+
+  //generate live topic
+  strncpy(liveTopic, "home/", 31);
+  strncat(liveTopic, _sensorName, 31);
+  strncat(liveTopic, "/liveData", 31);
+
+  //generate minute topic
+  strncpy(minuteTopic, "home/", 31);
+  strncat(minuteTopic, _sensorName, 31);
+  strncat(minuteTopic, "/minuteData", 31);
+
+  // init all defaults
+  sensorData = 0;
+  minuteData = 0;
+
+  //set current time
+  liveTimestamp = millis();
 }
 
 void DoubleSensor::handle() //TODO this should be not that hard ?!
@@ -253,12 +275,24 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
     {
       //ACTUAL DONE
       if (direction)
-      {
-        Serial.println("FIRED LEFT!");
+      { //if 1 turn to the right
+        minuteData--;
+        sensorData = -1;
+        digitalWrite(2, !digitalRead(2)); //TODO remove maybe
+
+        interval = millis() - liveTimestamp;
+        //liveData = breukTeller / interval;
+        liveTimestamp = millis();
       }
       else
-      {
-        Serial.println("FIRED RIGHT!");
+      { //if 1 turn to the left
+        minuteData++;
+        sensorData = 1;
+        digitalWrite(2, !digitalRead(2)); //TODO remove maybe
+
+        interval = millis() - liveTimestamp;
+        //liveData = breukTeller / interval;
+        liveTimestamp = millis();
       }
 
       state = READY;
@@ -269,4 +303,52 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
     }
     break;
   }
+
+  if (!leftSensor.fired && !rightSensor.fired) //Reset just incase
+  {
+    state = READY;
+  }
+}
+
+int DoubleSensor::getLiveData()
+{
+  unsigned long newInterval = millis() - liveTimestamp;
+
+  if (newInterval > interval)
+  {
+    if (newInterval - interval > 3000)
+    { // if interval is more then 3 seconds 'late' set 0
+      liveData = 0;
+    }
+    else
+    {
+      liveData = breukTeller / newInterval * sensorData;
+    }
+  }
+  else
+  {
+    liveData = breukTeller / interval * sensorData;
+  }
+
+  return liveData;
+}
+
+void DoubleSensor::addLiveDataToJson(JsonArray arr)
+{
+  JsonObject obj = arr.createNestedObject();
+  obj["sensorName"] = sensorName; //TODO make getter
+  obj["liveData"] = getLiveData();
+}
+
+void DoubleSensor::addMinuteDataToJson(JsonArray arr)
+{
+  JsonObject obj = arr.createNestedObject();
+  obj["sensorName"] = sensorName; //TODO make getter
+  obj["minuteData"] = minuteData;
+}
+
+void DoubleSensor::addStatusToJson(JsonArray arr)
+{
+  leftSensor.addStatusToJson(arr);
+  rightSensor.addStatusToJson(arr);
 }

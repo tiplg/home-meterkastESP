@@ -7,6 +7,7 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 #include <Sens.h>
+#include <ArduinoJson.h>
 #include "credentials.h"
 
 // Function prototypes
@@ -17,6 +18,9 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length);
 void onDisconnect(const WiFiEventStationModeDisconnected &event);
 void onConnect(const WiFiEventStationModeConnected &event);
 void startOTA();
+void PublishLiveData(unsigned long interval);
+void PublishMinuteData(unsigned long interval);
+void PublishStat(unsigned long interval);
 
 //wifi credentials
 const char *ssid = STASSID;
@@ -30,7 +34,9 @@ const int mqttPort = 1883;
 
 //status topic
 const char statusTopic[] = "home/meterkast/status";
-const char ipTopic[] = "home/meterkast/ip";
+const char statTopic[] = "home/meterkast/stat";
+const char liveTopic[] = "home/meterkast/livedata";
+const char minuteTopic[] = "home/meterkast/minutedata";
 
 WiFiClient espClient;               //wifi client for mqtt
 PubSubClient MQTTclient(espClient); // mqtt client
@@ -42,24 +48,16 @@ WiFiEventHandler mConnectHandler;
 //TODO reduce to minimum
 int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 
-//SimpleSensor zonSensor = SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000);
-//SimpleSensor waterSensor = SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000);
+SimpleSensor zonSensor = SimpleSensor(14, 1000, 2000, 3000, (char *)"zon1", 3600000);
+SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, 3000, (char *)"water", 3600000);
 
-DoubleSensor vermogen = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000), SimpleSensor(13, 1000, 2000, 3000));
-/*
-SimpleSensor sensors[] =
-    {
-        //input sensors
-        //SimpleSensor(16, 1000, 2000, (char *)"zon1", 3600000), //zon1
-        //SimpleSensor(14, 1060, 1480, (char *)"water", 3600000) //water
-        SimpleSensor(12, 1000, 2000, 3000, (char *)"zon1", 3600000), //zon1
-        SimpleSensor(13, 1060, 1480, 3000, (char *)"water", 3600000) //water
-                                                                     //
-};*/
+DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000, "vermogenLeft", 1), SimpleSensor(13, 1000, 2000, 3000, "vermogenRight", 1), "vermogen", 3600000);
 
-unsigned long currentMillis = 0; // used for timing
-unsigned long minuteTimestamp = 0;
-unsigned long liveTimestamp = 0;
+// used for timing
+unsigned long currentMillis = 0;
+unsigned long minuteTimestamp = 10000;
+unsigned long liveTimestamp = 10000;
+unsigned long statusTimestamp = 10000;
 
 // the setup function runs once when you press reset or power the board
 void setup()
@@ -84,8 +82,8 @@ void setup()
   startOTA();
 
   currentMillis = millis();
-  minuteTimestamp = currentMillis;
-  liveTimestamp = currentMillis;
+  //minuteTimestamp = currentMillis;
+  //liveTimestamp = currentMillis;
 }
 
 // the loop function runs over and over again forever
@@ -98,40 +96,112 @@ void loop()
     ConnectToMQTT();
   }
 
-  if (currentMillis - liveTimestamp > 1 * 1000)
-  {                            // Do every Second
-    liveTimestamp += 1 * 1000; // add one second to current timestamp
+  PublishLiveData((unsigned long)1 * 1000);
+  PublishMinuteData((unsigned long)10 * 1000);
+  PublishStat((unsigned long)10 * 1000);
 
-    //zonSensor.publishLiveData(MQTTclient);
+  zonSensor.handle();
+  waterSensor.handle();
+  vermogenSensor.handle();
 
-    //Serial.printf("samples: %i\n", zonSensor.samples);
-    //zonSensor.samples = 0;
-  }
-
-  if (currentMillis - minuteTimestamp > 60 * 1000)
-  {                               // Do every minute
-    minuteTimestamp += 60 * 1000; // add one minute to current timestamp
-
-    //zonSensor.publishMinuteData(MQTTclient);
-  }
-
-  /*
-  Serial.print("0,1000,2000,3000,");
-  Serial.print(sensors[0].sensorData);
-  Serial.print(",");
-  Serial.println(sensors[1].sensorData);
-  //Serial.println(sensors[0].sensorData);
-*/
-  //zonSensor.handle();
-  //waterSensor.handle();
-
-  vermogen.handle();
-
-  if (currentMillis % 50 < 2)
-    //Serial.printf("0,1000,2000,3000,%i,%i\n", zonSensor.sensorData, waterSensor.sensorData);
-
-    ArduinoOTA.handle();
+  ArduinoOTA.handle();
   MQTTclient.loop();
+}
+
+void PublishLiveData(unsigned long interval)
+{
+
+  if (currentMillis - liveTimestamp > interval)
+  {                            // Do every Second
+    liveTimestamp += interval; // add one second to current timestamp
+
+    StaticJsonDocument<256> doc;
+    char buffer[256];
+
+    doc["type"] = "liveData";
+    doc["time"] = millis();
+
+    JsonArray sensors = doc.createNestedArray("sensors");
+
+    vermogenSensor.addLiveDataToJson(sensors);
+    waterSensor.addLiveDataToJson(sensors);
+    zonSensor.addLiveDataToJson(sensors);
+
+    size_t n = serializeJson(doc, buffer);
+
+    MQTTclient.beginPublish(liveTopic, n, false);
+    for (size_t i = 0; i < n; i++)
+    {
+      MQTTclient.write(buffer[i]);
+    }
+    MQTTclient.endPublish();
+
+    //Serial.println(buffer);
+  }
+}
+
+void PublishMinuteData(unsigned long interval) //TODO finsih
+{
+  //TODO add timestamp RTC
+  //TODO if failed store data locally and push later
+  if (currentMillis - minuteTimestamp > interval)
+  {                              // Do every minute
+    minuteTimestamp += interval; // add one minute to current timestamp
+
+    StaticJsonDocument<512> doc;
+    char buffer[512];
+
+    doc["type"] = "minuteData";
+    doc["time"] = millis();
+
+    JsonArray sensors = doc.createNestedArray("sensors");
+
+    vermogenSensor.addMinuteDataToJson(sensors);
+    waterSensor.addMinuteDataToJson(sensors);
+    zonSensor.addMinuteDataToJson(sensors);
+
+    size_t n = serializeJson(doc, buffer);
+
+    MQTTclient.beginPublish(minuteTopic, n, false);
+    for (size_t i = 0; i < n; i++)
+    {
+      MQTTclient.write(buffer[i]);
+    }
+    MQTTclient.endPublish();
+
+    //Serial.println(buffer);
+  }
+}
+
+void PublishStat(unsigned long interval) //TODO finsih
+{
+  if (currentMillis - statusTimestamp > interval) // if interval has passed prepare and send the data
+  {
+    statusTimestamp += interval; //add interval to timestamp
+
+    StaticJsonDocument<512> doc;
+    char buffer[512];
+
+    doc["type"] = "stat";
+    doc["time"] = millis();
+
+    JsonArray sensors = doc.createNestedArray("sensors");
+
+    vermogenSensor.addStatusToJson(sensors);
+    waterSensor.addStatusToJson(sensors);
+    zonSensor.addStatusToJson(sensors);
+
+    size_t n = serializeJson(doc, buffer);
+
+    MQTTclient.beginPublish(statTopic, n, false);
+    for (size_t i = 0; i < n; i++)
+    {
+      MQTTclient.write(buffer[i]);
+    }
+    MQTTclient.endPublish();
+
+    //Serial.println(buffer);
+  }
 }
 
 void ConnectToWifi()
@@ -156,11 +226,20 @@ void ConnectToMQTT()
   if (currentMillis - MqttReconnectAttempt > 1000)
   {
     MqttReconnectAttempt = currentMillis;
-    if (MQTTclient.connect("ESPmeterkast", statusTopic, 1, true, "offline"))
+    if (MQTTclient.connect("ESPmeterkast", statusTopic, 1, true, "{\"status\":\"offline\"}"))
     {
       //MQTTclient.publish("outTopic", "hello world"); //todo connection topic / lastwill
-      MQTTclient.publish(statusTopic, "online", true);
-      MQTTclient.publish(ipTopic, WiFi.localIP().toString().c_str(), true);
+
+      StaticJsonDocument<64> doc;
+      char buffer[512];
+
+      doc["time"] = millis();
+      doc["status"] = "online";
+      doc["ip"] = WiFi.localIP().toString();
+
+      serializeJson(doc, buffer);
+
+      MQTTclient.publish(statusTopic, buffer, true);
 
       Serial.println("Connected to MQTT");
 

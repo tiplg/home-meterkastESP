@@ -3,12 +3,12 @@
 
 #include "Arduino.h"
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 class SimpleSensor
 {
 public:
   SimpleSensor();
-  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout);
   SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller);
 
   int getSensorData();
@@ -16,19 +16,25 @@ public:
   void makeHigh();
   void makeInput();
   boolean checkInput();
-  boolean checkThreshold();
-  void publishMinuteData(PubSubClient MQTTclient);
-  void publishLiveData(PubSubClient MQTTclient);
+  void checkThreshold();
+  void addLiveDataToJson(JsonArray arr);
+  void addMinuteDataToJson(JsonArray arr);
+  void addStatusToJson(JsonArray arr);
+  int getLiveData();
   boolean handle();
-  void ISR();
+
+  unsigned long handleTimestamp;
+  unsigned long MAXHANDLETIME = 200;
+  boolean invalid;
 
   int sensorPin;
-  char sensorName[];
+  char sensorName[32];
   int thresholdSet;
   int thresholdReset;
   int timeout;
 
-  int samples = 0;
+  int samples;
+  int statusData;
 
   int sensorData;
   int sensorMin;
@@ -47,7 +53,6 @@ public:
 private:
   enum states
   {
-    MAKEHIGH,
     MAKEINPUT,
     CHECKINPUT
   };
@@ -60,14 +65,29 @@ private:
 class DoubleSensor
 {
 public:
-  DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor);
+  DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, char _sensorName[], long _breukTeller);
 
   void handle();
+  int getLiveData();
+  void addLiveDataToJson(JsonArray arr);
+  void addMinuteDataToJson(JsonArray arr);
+  void addStatusToJson(JsonArray arr);
 
   SimpleSensor leftSensor;
   SimpleSensor rightSensor;
 
+  char sensorName[32];
+
   int sensorData;
+
+  int liveData;
+  unsigned long liveTimestamp;
+  unsigned long interval;
+  long breukTeller;
+  char liveTopic[32];
+
+  long minuteData;
+  char minuteTopic[32];
 
 private:
   enum directions
@@ -82,14 +102,8 @@ private:
   {
     READY,
     TRIGGERED,
-    TRIGGEREDLEFT,
-    TRIGGEREDRIGHT,
     ARMED,
-    ARMEDLEFT,
-    ARMEDRIGHT,
     FIRED,
-    FIREDLEFT,
-    FIREDRIGHT,
   };
 
   enum states state;
