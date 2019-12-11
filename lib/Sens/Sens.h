@@ -12,20 +12,23 @@ public:
   SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller);
 
   int getSensorData();
+  int getLiveData();
+  int getMinuteData(boolean reset);
 
   void makeHigh();
   void makeInput();
   boolean checkInput();
   void checkThreshold();
-  void addLiveDataToJson(JsonArray arr);
-  void addMinuteDataToJson(JsonArray arr);
-  void addStatusToJson(JsonArray arr);
-  int getLiveData();
   boolean handle();
 
+  void addLiveDataToJson(JsonArray arr);
+  void addMinuteDataToJson(JsonArray arr);
+  void addStatToJson(JsonArray arr);
+
   unsigned long handleTimestamp;
-  unsigned long MAXHANDLETIME = 200;
+  unsigned long MAXHANDLETIME = 70; //TEST reduce to minimum
   boolean invalid;
+  int invalidCount;
 
   int sensorPin;
   char sensorName[32];
@@ -33,8 +36,9 @@ public:
   int thresholdReset;
   int timeout;
 
-  int samples;
-  int statusData;
+  int handles;
+  int statData;
+  long statMillis;
 
   int sensorData;
   int sensorMin;
@@ -42,13 +46,11 @@ public:
   boolean fired;
 
   int liveData;
-  unsigned long liveTimestamp;
-  unsigned long interval;
+  unsigned long liveDataMillis;
+  unsigned long liveDataInterval;
   long breukTeller;
-  char liveTopic[32];
 
   long minuteData;
-  char minuteTopic[32];
 
 private:
   enum states
@@ -67,11 +69,14 @@ class DoubleSensor
 public:
   DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, char _sensorName[], long _breukTeller);
 
-  void handle();
   int getLiveData();
+  int getMinuteData(boolean reset);
+
+  void handle();
+
   void addLiveDataToJson(JsonArray arr);
   void addMinuteDataToJson(JsonArray arr);
-  void addStatusToJson(JsonArray arr);
+  void addStatToJson(JsonArray arr);
 
   SimpleSensor leftSensor;
   SimpleSensor rightSensor;
@@ -81,13 +86,11 @@ public:
   int sensorData;
 
   int liveData;
-  unsigned long liveTimestamp;
-  unsigned long interval;
+  unsigned long liveDataMillis;
+  unsigned long liveDataInterval;
   long breukTeller;
-  char liveTopic[32];
 
   long minuteData;
-  char minuteTopic[32];
 
 private:
   enum directions

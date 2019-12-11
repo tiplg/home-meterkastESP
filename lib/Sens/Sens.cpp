@@ -18,16 +18,6 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
 
   strncpy(sensorName, _sensorName, 31);
 
-  //generate minute topic
-  strncpy(minuteTopic, "home/", 31);
-  strncat(minuteTopic, _sensorName, 31);
-  strncat(minuteTopic, "/minuteData", 31);
-
-  //generate live topic
-  strncpy(liveTopic, "home/", 31);
-  strncat(liveTopic, _sensorName, 31);
-  strncat(liveTopic, "/liveData", 31);
-
   //setup correct first state for handle()
   makeHigh();
   stateTime = micros();
@@ -38,11 +28,13 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
   sensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
-  samples = 0;
+  handles = 0;
+  invalidCount = 0;
   fired = false;
 
   //set current time
-  liveTimestamp = millis();
+  liveDataMillis = millis();
+  statMillis = liveDataMillis;
 }
 
 int SimpleSensor::getSensorData()
@@ -67,17 +59,17 @@ boolean SimpleSensor::checkInput()
   return !digitalRead(sensorPin);
 }
 
-void SimpleSensor::checkThreshold() //TODO back to void
+void SimpleSensor::checkThreshold()
 {
   if (!fired && sensorData < thresholdSet)
   {
     fired = true;
     minuteData++;
-    statusData++;
-    digitalWrite(2, !digitalRead(2)); //TODO remove maybe
+    statData++;
+    digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
 
-    interval = millis() - liveTimestamp;
-    liveTimestamp = millis();
+    liveDataInterval = millis() - liveDataMillis;
+    liveDataMillis = millis();
   }
   else if (fired && sensorData > thresholdReset)
   {
@@ -90,14 +82,16 @@ void SimpleSensor::checkThreshold() //TODO back to void
   if (sensorData < sensorMin)
     sensorMin = sensorData;
 }
-int i = 0;
-boolean SimpleSensor::handle() //TODO rewirte to void   if time between handles is to high dont use sensorData
+
+boolean SimpleSensor::handle()
 {
   long timeElapsed = micros() - stateTime; // this time interval is used for the states
+  handles++;
 
   if (micros() - handleTimestamp > MAXHANDLETIME) // if handle time is to long sensorData might not be acurate
   {
     invalid = true;
+    invalidCount++;
   }
   else
   {
@@ -129,7 +123,6 @@ boolean SimpleSensor::handle() //TODO rewirte to void   if time between handles 
       makeHigh();
       stateTime = micros();
       state = MAKEINPUT;
-      samples++; //DEBUG
     }
   }
   }
@@ -139,11 +132,11 @@ boolean SimpleSensor::handle() //TODO rewirte to void   if time between handles 
 
 int SimpleSensor::getLiveData()
 {
-  unsigned long newInterval = millis() - liveTimestamp;
+  unsigned long newInterval = millis() - liveDataMillis;
 
-  if (newInterval > interval)
+  if (newInterval > liveDataInterval)
   {
-    if (newInterval - interval > 3000)
+    if (newInterval - liveDataInterval > 3000)
     { // if interval is more then 3 seconds 'late' set 0
       liveData = 0;
     }
@@ -154,37 +147,52 @@ int SimpleSensor::getLiveData()
   }
   else
   {
-    liveData = breukTeller / interval;
+    liveData = breukTeller / liveDataInterval;
   }
 
   return liveData;
 }
 
+int SimpleSensor::getMinuteData(boolean reset)
+{
+  int result = minuteData;
+
+  if (reset)
+  {
+    minuteData = 0;
+  }
+
+  return result;
+}
+
 void SimpleSensor::addLiveDataToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
-  obj["sensorName"] = sensorName; //TODO make getter
+  obj["sensorName"] = sensorName;
   obj["liveData"] = getLiveData();
 }
 
 void SimpleSensor::addMinuteDataToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
-  obj["sensorName"] = sensorName; //TODO make getter
-  obj["minuteData"] = minuteData;
+  obj["sensorName"] = sensorName;
+  obj["minuteData"] = getMinuteData(true);
 }
 
-void SimpleSensor::addStatusToJson(JsonArray arr)
+void SimpleSensor::addStatToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
-  obj["sensorName"] = sensorName; //TODO make getter
+  obj["sensorName"] = sensorName;
   obj["sensorMin"] = sensorMin;
   obj["sensorMax"] = sensorMax;
-  obj["samples"] = samples;
+  obj["handleTime"] = (millis() - statMillis) * 1000 / handles;
+  obj["invalidCount"] = invalidCount;
 
   sensorMin = 9999;
   sensorMax = 0;
-  samples = 0;
+  handles = 0;
+  invalidCount = 0;
+  statMillis = millis();
 }
 
 DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, char _sensorName[], long _breukTeller)
@@ -197,22 +205,12 @@ DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, 
   //copy sensor name
   strncpy(sensorName, _sensorName, 31);
 
-  //generate live topic
-  strncpy(liveTopic, "home/", 31);
-  strncat(liveTopic, _sensorName, 31);
-  strncat(liveTopic, "/liveData", 31);
-
-  //generate minute topic
-  strncpy(minuteTopic, "home/", 31);
-  strncat(minuteTopic, _sensorName, 31);
-  strncat(minuteTopic, "/minuteData", 31);
-
   // init all defaults
   sensorData = 0;
   minuteData = 0;
 
   //set current time
-  liveTimestamp = millis();
+  liveDataMillis = millis();
 }
 
 void DoubleSensor::handle() //TODO this should be not that hard ?!
@@ -277,22 +275,32 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
       if (direction)
       { //if 1 turn to the right
         minuteData--;
-        sensorData = -1;
-        digitalWrite(2, !digitalRead(2)); //TODO remove maybe
 
-        interval = millis() - liveTimestamp;
-        //liveData = breukTeller / interval;
-        liveTimestamp = millis();
+        if (sensorData == 1) //TODO impove this
+          sensorData = 0;
+        else
+          sensorData = -1;
+
+        digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
+
+        liveDataInterval = millis() - liveDataMillis;
+
+        liveDataMillis = millis();
       }
       else
       { //if 1 turn to the left
         minuteData++;
-        sensorData = 1;
-        digitalWrite(2, !digitalRead(2)); //TODO remove maybe
 
-        interval = millis() - liveTimestamp;
-        //liveData = breukTeller / interval;
-        liveTimestamp = millis();
+        if (sensorData == -1)
+          sensorData = 0;
+        else
+          sensorData = 1;
+
+        digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
+
+        liveDataInterval = millis() - liveDataMillis;
+
+        liveDataMillis = millis();
       }
 
       state = READY;
@@ -312,11 +320,11 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
 
 int DoubleSensor::getLiveData()
 {
-  unsigned long newInterval = millis() - liveTimestamp;
+  unsigned long newInterval = millis() - liveDataMillis;
 
-  if (newInterval > interval)
+  if (newInterval > liveDataInterval)
   {
-    if (newInterval - interval > 3000)
+    if (newInterval - liveDataInterval > 3000)
     { // if interval is more then 3 seconds 'late' set 0
       liveData = 0;
     }
@@ -327,28 +335,40 @@ int DoubleSensor::getLiveData()
   }
   else
   {
-    liveData = breukTeller / interval * sensorData;
+    liveData = breukTeller / liveDataInterval * sensorData;
   }
 
   return liveData;
 }
 
+int DoubleSensor::getMinuteData(boolean reset)
+{
+  int result = minuteData;
+
+  if (reset)
+  {
+    minuteData = 0;
+  }
+
+  return result;
+}
+
 void DoubleSensor::addLiveDataToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
-  obj["sensorName"] = sensorName; //TODO make getter
+  obj["sensorName"] = sensorName;
   obj["liveData"] = getLiveData();
 }
 
 void DoubleSensor::addMinuteDataToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
-  obj["sensorName"] = sensorName; //TODO make getter
-  obj["minuteData"] = minuteData;
+  obj["sensorName"] = sensorName;
+  obj["minuteData"] = getMinuteData(true);
 }
 
-void DoubleSensor::addStatusToJson(JsonArray arr)
+void DoubleSensor::addStatToJson(JsonArray arr)
 {
-  leftSensor.addStatusToJson(arr);
-  rightSensor.addStatusToJson(arr);
+  leftSensor.addStatToJson(arr);
+  rightSensor.addStatToJson(arr);
 }
