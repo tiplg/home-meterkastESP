@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <string.h>
 
 #include <Sens.h>
 #include "credentials.h"
@@ -29,6 +30,7 @@ const char *ssid = STASSID;
 const char *password = STAPSK;
 
 //mqtt credentials
+const char *mqttId = UUID;
 const char *mqttServer = "192.168.0.100";
 const int mqttPort = 1883;
 
@@ -58,7 +60,7 @@ int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 SimpleSensor zonSensor = SimpleSensor(14, 1000, 2000, 3000, (char *)"zon1", 3600000);
 SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, 3000, (char *)"water", 3600000);
 
-DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000, "vermogenLeft", 1), SimpleSensor(13, 1000, 2000, 3000, "vermogenRight", 1), "vermogen", 6000000);
+DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000, (char *)"vermogenLeft", 1), SimpleSensor(13, 1000, 2000, 3000, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
 
 // used for timing
 unsigned long currentMillis = 0;
@@ -76,6 +78,7 @@ void setup()
 
   Serial.println();
   Serial.println("Booting...");
+  Serial.println(UUID);
 
   mDisConnectHandler = WiFi.onStationModeDisconnected(onDisconnect);
   mConnectHandler = WiFi.onStationModeConnected(onConnect);
@@ -84,10 +87,12 @@ void setup()
   MQTTclient.setCallback(MQTTcallback);
 
   ConnectToWifi();
-  ConnectToMQTT();
 
   timeClient.begin();
   timeClient.forceUpdate();
+
+  ConnectToMQTT();
+
   startOTA();
 
   currentMillis = millis();
@@ -138,8 +143,8 @@ void PublishLiveData(unsigned long interval)
   {                            // Do every Second
     liveTimestamp += interval; // add one second to current timestamp
 
-    StaticJsonDocument<256> doc;
-    char buffer[256];
+    StaticJsonDocument<512> doc;
+    char buffer[512];
 
     doc["type"] = "liveData";
     doc["time"] = timeClient.getEpochTime();
@@ -150,14 +155,9 @@ void PublishLiveData(unsigned long interval)
     waterSensor.addLiveDataToJson(sensors);
     zonSensor.addLiveDataToJson(sensors);
 
-    size_t n = serializeJson(doc, buffer);
+    serializeJson(doc, buffer);
 
-    MQTTclient.beginPublish(liveTopic, n, false); //TEST .publish does not work
-    for (size_t i = 0; i < n; i++)
-    {
-      MQTTclient.write(buffer[i]);
-    }
-    MQTTclient.endPublish();
+    MQTTclient.publish(liveTopic, buffer);
 
     //Serial.println(buffer);
   }
@@ -182,14 +182,9 @@ void PublishMinuteData(unsigned long interval)
     waterSensor.addMinuteDataToJson(sensors);
     zonSensor.addMinuteDataToJson(sensors);
 
-    size_t n = serializeJson(doc, buffer);
+    serializeJson(doc, buffer);
 
-    MQTTclient.beginPublish(minuteTopic, n, false);
-    for (size_t i = 0; i < n; i++)
-    {
-      MQTTclient.write(buffer[i]);
-    }
-    MQTTclient.endPublish();
+    MQTTclient.publish(minuteTopic, buffer);
 
     //Serial.println(buffer);
   }
@@ -213,14 +208,9 @@ void PublishStat(unsigned long interval)
     waterSensor.addStatToJson(sensors);
     zonSensor.addStatToJson(sensors);
 
-    size_t n = serializeJson(doc, buffer);
+    serializeJson(doc, buffer);
 
-    MQTTclient.beginPublish(settingTopic, n, false);
-    for (size_t i = 0; i < n; i++)
-    {
-      MQTTclient.write(buffer[i]);
-    }
-    MQTTclient.endPublish();
+    MQTTclient.publish(settingTopic, buffer);
 
     //Serial.println(buffer);
   }
@@ -248,13 +238,14 @@ void ConnectToMQTT()
   if (currentMillis - MqttReconnectAttempt > 1000)
   {
     MqttReconnectAttempt = currentMillis;
-    if (MQTTclient.connect("ESPmeterkast", statusTopic, 1, true, "{\"status\":\"offline\"}"))
+    if (MQTTclient.connect(mqttId, statusTopic, 1, true, "{\"status\":\"offline\"}"))
     {
-      StaticJsonDocument<64> doc;
+      StaticJsonDocument<512> doc;
       char buffer[512];
 
       doc["time"] = timeClient.getEpochTime();
       doc["status"] = "online";
+      doc["id"] = mqttId;
       doc["ip"] = WiFi.localIP().toString();
 
       serializeJson(doc, buffer);
@@ -272,9 +263,9 @@ void ConnectToMQTT()
 
 void MQTTcallback(char *topic, byte *payload, unsigned int length)
 {
-  Serial.print("MQTT:");
-  Serial.println(topic);
-  StaticJsonDocument<256> doc;
+  //Serial.print("MQTT:");
+  //Serial.println(topic);
+  StaticJsonDocument<512> doc;
   DeserializationError err = deserializeJson(doc, payload, length);
   if (err)
   {
