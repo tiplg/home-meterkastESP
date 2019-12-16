@@ -7,7 +7,7 @@ SimpleSensor::SimpleSensor()
 {
 }
 
-SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller)
+SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, char _sensorName[], long _breukTeller)
 {
   //get sensor settings
   sensorPin = _pin;
@@ -15,22 +15,23 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int
   thresholdReset = _thresholdReset;
   timeout = _timeout;
   breukTeller = _breukTeller;
+  _highSet = highSet;
 
   strncpy(sensorName, _sensorName, 31);
 
   //setup correct first state for handle()
   makeHigh();
-  stateTime = micros();
-  state = MAKEINPUT;
+  makeHighMicros = micros();
 
   // init all defaults
   minuteData = 0;
-  sensorData = 0;
+  rawSensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
-  handles = 0;
-  invalidCount = 0;
   fired = false;
+
+  avgIndex = 0;
+  sensorData = 0;
 
   //set current time
   liveDataMillis = millis();
@@ -61,73 +62,91 @@ boolean SimpleSensor::checkInput()
 
 void SimpleSensor::checkThreshold()
 {
-  if (!fired && sensorData < thresholdSet)
+  boolean set = _highSet ? sensorData >= thresholdSet : sensorData <= thresholdSet;
+  boolean reset = _highSet ? sensorData <= thresholdReset : sensorData >= thresholdReset;
+
+  if (!fired && set)
   {
     fired = true;
     minuteData++;
     statData++;
     digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
 
+    //Serial.println(sensorName); //DEBUG
+
     liveDataInterval = millis() - liveDataMillis;
     liveDataMillis = millis();
   }
-  else if (fired && sensorData > thresholdReset)
+  else if (fired && reset)
   {
     fired = false;
   }
+}
+
+void SimpleSensor::startReading()
+{
+  if (!digitalRead(sensorPin))
+  {
+    makeHigh();
+    makeHighMicros = micros();
+  }
+
+  while (makeHighMicros - micros() < 100)
+  {
+    delayMicroseconds(1);
+  }
+
+  makeInput();
+  startReadingMicros = micros();
+  readComplete = false;
+
+  rawSensorData = 0;
+}
+
+void SimpleSensor::read()
+{
+  if (!readComplete)
+  {
+    if (checkInput())
+    {
+      readComplete = true;
+      rawSensorData = micros() - startReadingMicros;
+    }
+  }
+}
+
+void SimpleSensor::endReading()
+{
+  if (!readComplete)
+  {
+    rawSensorData = 9999;
+  }
+
+  avg[avgIndex] = rawSensorData;
+  avgIndex++;
+  if (avgIndex >= avgSamples)
+  {
+    avgIndex = 0;
+  }
+
+  sensorData = 0;
+
+  for (int i = 0; i < avgSamples; i++)
+  {
+    sensorData += avg[i];
+  }
+
+  sensorData /= avgSamples;
 
   if (sensorData > sensorMax)
     sensorMax = sensorData;
 
   if (sensorData < sensorMin)
     sensorMin = sensorData;
-}
 
-boolean SimpleSensor::handle()
-{
-  long timeElapsed = micros() - stateTime; // this time interval is used for the states
-  handles++;
-
-  if (micros() - handleTimestamp > MAXHANDLETIME) // if handle time is to long sensorData might not be acurate
-  {
-    invalid = true;
-    invalidCount++;
-  }
-  else
-  {
-    invalid = false;
-  }
-  handleTimestamp = micros();
-
-  switch (state)
-  {
-  case MAKEINPUT:
-    if (timeElapsed > 100)
-    {
-      makeInput();
-      stateTime = micros();
-      state = CHECKINPUT;
-    }
-    break;
-  case CHECKINPUT:
-  {
-    long timeElapsed = micros() - stateTime;
-    if (timeElapsed > timeout || checkInput())
-    {
-      if (!invalid) // if not invalid sensorData can be used to check thrersholds
-      {
-        sensorData = (timeElapsed > timeout) ? timeout : timeElapsed;
-        checkThreshold();
-      }
-
-      makeHigh();
-      stateTime = micros();
-      state = MAKEINPUT;
-    }
-  }
-  }
-
-  return !invalid;
+  checkThreshold();
+  makeHigh();
+  makeHighMicros = micros();
 }
 
 int SimpleSensor::getLiveData()
@@ -185,13 +204,10 @@ void SimpleSensor::addStatToJson(JsonArray arr)
   obj["sensorName"] = sensorName;
   obj["sensorMin"] = sensorMin;
   obj["sensorMax"] = sensorMax;
-  obj["handleTime"] = (millis() - statMillis) * 1000 / handles;
-  obj["invalidCount"] = invalidCount;
 
   sensorMin = 9999;
   sensorMax = 0;
-  handles = 0;
-  invalidCount = 0;
+
   statMillis = millis();
 }
 
@@ -211,65 +227,102 @@ DoubleSensor::DoubleSensor(SimpleSensor _leftSensor, SimpleSensor _rightSensor, 
 
   //set current time
   liveDataMillis = millis();
+
+  state = READY;
 }
 
-void DoubleSensor::handle() //TODO this should be not that hard ?!
+void DoubleSensor::startReading(boolean left)
 {
-  leftSensor.handle();
-  rightSensor.handle();
+  if (left)
+    leftSensor.startReading();
+  else
+    rightSensor.startReading();
+}
+
+void DoubleSensor::read(boolean left)
+{
+  if (left)
+    leftSensor.read();
+  else
+    rightSensor.read();
+}
+
+void DoubleSensor::endReading(boolean left)
+{
+  if (left)
+    leftSensor.endReading();
+  else
+    rightSensor.endReading();
+}
+
+int debug = 0;
+
+void DoubleSensor::handleDouble()
+{
+  // invert because vermogenSensors are inverted
+  boolean leftFired = leftSensor.fired;
+  boolean rightFired = rightSensor.fired;
 
   switch (state)
   {
   case READY:
-    if (leftSensor.fired)
+    if (leftFired)
     {
       state = TRIGGERED;
       direction = LEFT;
+      //Serial.printf("TRIGGERED\n"); //DEBUG
     }
-    else if (rightSensor.fired)
+    else if (rightFired)
     {
       state = TRIGGERED;
       direction = RIGHT;
+      // Serial.printf("TRIGGERED\n"); //DEBUG
     }
     break;
   case TRIGGERED:
-    if (leftSensor.fired && rightSensor.fired)
+    if (leftFired && rightFired)
     {
       state = ARMED;
+      //Serial.printf("ARMED\n"); //DEBUG
     }
-    else if (!leftSensor.fired && !rightSensor.fired)
+    else if (!leftFired && !rightFired)
     {
       state = READY;
+      // Serial.printf("READY\n"); //DEBUG
     }
     break;
   case ARMED:
-    if (!leftSensor.fired && rightSensor.fired)
+    if (!leftFired && rightFired)
     {
       switch (direction)
       {
       case LEFT:
         state = FIRED;
+        //Serial.printf("FIRED\n"); //DEBUG
         break;
       case RIGHT:
         state = TRIGGERED;
+        // Serial.printf("TRIGGERED\n"); //DEBUG
         break;
       }
     }
-    else if (leftSensor.fired && !rightSensor.fired)
+    else if (leftFired && !rightFired)
     {
       switch (direction)
       {
       case LEFT:
         state = TRIGGERED;
+        //Serial.printf("TRIGGERED\n"); //DEBUG
         break;
       case RIGHT:
         state = FIRED;
+        //Serial.printf("FIRED\n"); //DEBUG
         break;
       }
     }
     break;
   case FIRED:
-    if (!leftSensor.fired && !rightSensor.fired)
+    if (!leftFired && !rightFired)
     {
       //ACTUAL DONE
       if (direction)
@@ -281,7 +334,7 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
         else
           sensorData = -1;
 
-        digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
+        digitalWrite(2, !digitalRead(2));
 
         liveDataInterval = millis() - liveDataMillis;
 
@@ -296,26 +349,30 @@ void DoubleSensor::handle() //TODO this should be not that hard ?!
         else
           sensorData = 1;
 
-        digitalWrite(2, !digitalRead(2)); //DEBUG remove maybe
+        digitalWrite(2, !digitalRead(2));
 
         liveDataInterval = millis() - liveDataMillis;
 
         liveDataMillis = millis();
       }
-
+      //Serial.printf("%s, %i , %i\n", sensorName, sensorData, debug++); //DEBUG
+      //Serial.printf("READY\n");                                        //DEBUG
       state = READY;
     }
-    else if (leftSensor.fired && rightSensor.fired)
+    else if (leftFired && rightFired)
     {
       state = ARMED;
+      //Serial.printf("ARMED\n"); //DEBUG
     }
     break;
   }
-
-  if (!leftSensor.fired && !rightSensor.fired) //Reset just incase
+  /*
+  if (!leftFired && !rightFired) //Reset just incase
   {
     state = READY;
+    Serial.printf("READY"); //DEBUG
   }
+  */
 }
 
 int DoubleSensor::getLiveData()

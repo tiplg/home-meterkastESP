@@ -52,16 +52,16 @@ WiFiEventHandler mConnectHandler;
 
 boolean otaEnabled = true;
 unsigned long otaMillis;
-unsigned long otaTimeout = 60 * 1000;
+unsigned long otaTimeout = 10 * 1000;
 
 //TEST reduce to minimum
 int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 
-SimpleSensor zonSensor = SimpleSensor(14, 1000, 2000, 3000, (char *)"zon1", 3600000);
-SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, 3000, (char *)"water", 3600000);
+SimpleSensor zonSensor = SimpleSensor(14, 1500, 1600, false, 1700, (char *)"zon1", 3600000);
+SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, false, 3000, (char *)"water", 3600000);
 
-DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 1000, 2000, 3000, (char *)"vermogenLeft", 1), SimpleSensor(13, 1000, 2000, 3000, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
-
+DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 818 + 55, 818 + 25, true, 1000, (char *)"vermogenLeft", 1), SimpleSensor(13, 689 + 55, 689 + 25, true, 300, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
+//12,13
 // used for timing
 unsigned long currentMillis = 0;
 unsigned long minuteTimestamp = 0;
@@ -115,11 +115,9 @@ void loop()
 
   PublishLiveData(1 * 1000UL);
   PublishMinuteData(60 * 1000UL);
-  PublishStat(60 * 1000UL);
+  PublishStat(5 * 1000UL);
 
-  zonSensor.handle();
-  waterSensor.handle();
-  vermogenSensor.handle();
+  ReadSensors();
 
   MQTTclient.loop();
 
@@ -134,6 +132,41 @@ void loop()
       Serial.println("ota disabled");
     }
   }
+}
+
+void ReadSensors()
+{
+  for (int i = 0; i < 30; i++)
+  {
+    vermogenSensor.startReading(true);
+    for (int i = 0; i < 1000; i++)
+    {
+      vermogenSensor.read(true);
+    }
+    vermogenSensor.endReading(true);
+
+    vermogenSensor.startReading(false);
+    for (int i = 0; i < 1000; i++)
+    {
+      vermogenSensor.read(false);
+    }
+    vermogenSensor.endReading(false);
+
+    vermogenSensor.handleDouble();
+  }
+
+  //Serial.printf("%i,%i,0,55,100,%i,%i\n", vermogenSensor.leftSensor.sensorData - 818, vermogenSensor.rightSensor.sensorData - 689, vermogenSensor.leftSensor.fired ? 90 : 10, vermogenSensor.rightSensor.fired ? 91 : 11); //DEBUG
+
+  zonSensor.startReading();
+  for (int i = 0; i < 2000; i++)
+  {
+    zonSensor.read();
+  }
+  zonSensor.endReading();
+
+  Serial.printf("%i,0,2000,%i\n", zonSensor.sensorData, zonSensor.fired ? 1900 : 100);
+
+  //Serial.printf("%i,-100,2800\n", zonSensor.getSensorData());
 }
 
 void PublishLiveData(unsigned long interval)
@@ -152,7 +185,7 @@ void PublishLiveData(unsigned long interval)
     JsonArray sensors = doc.createNestedArray("sensors");
 
     vermogenSensor.addLiveDataToJson(sensors);
-    waterSensor.addLiveDataToJson(sensors);
+    //waterSensor.addLiveDataToJson(sensors);
     zonSensor.addLiveDataToJson(sensors);
 
     serializeJson(doc, buffer);
@@ -179,7 +212,7 @@ void PublishMinuteData(unsigned long interval)
     JsonArray sensors = doc.createNestedArray("sensors");
 
     vermogenSensor.addMinuteDataToJson(sensors);
-    waterSensor.addMinuteDataToJson(sensors);
+    //waterSensor.addMinuteDataToJson(sensors);
     zonSensor.addMinuteDataToJson(sensors);
 
     serializeJson(doc, buffer);
@@ -205,7 +238,7 @@ void PublishStat(unsigned long interval)
     JsonArray sensors = doc.createNestedArray("sensors");
 
     vermogenSensor.addStatToJson(sensors);
-    waterSensor.addStatToJson(sensors);
+    //waterSensor.addStatToJson(sensors);
     zonSensor.addStatToJson(sensors);
 
     serializeJson(doc, buffer);

@@ -9,11 +9,15 @@ class SimpleSensor
 {
 public:
   SimpleSensor();
-  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, int _timeout, char _sensorName[], long _breukTeller);
+  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, char _sensorName[], long _breukTeller);
 
   int getSensorData();
   int getLiveData();
   int getMinuteData(boolean reset);
+
+  void startReading();
+  void read();
+  void endReading();
 
   void makeHigh();
   void makeInput();
@@ -25,25 +29,30 @@ public:
   void addMinuteDataToJson(JsonArray arr);
   void addStatToJson(JsonArray arr);
 
-  unsigned long handleTimestamp;
-  unsigned long MAXHANDLETIME = 70; //TEST reduce to minimum
-  boolean invalid;
-  int invalidCount;
+  unsigned long makeHighMicros;
+
+  unsigned long startReadingMicros;
+  boolean readComplete;
 
   int sensorPin;
   char sensorName[32];
   int thresholdSet;
   int thresholdReset;
   int timeout;
+  boolean _highSet;
 
-  int handles;
   int statData;
   long statMillis;
 
-  int sensorData;
+  int rawSensorData;
   int sensorMin;
   int sensorMax;
   boolean fired;
+
+  int sensorData;
+  int avg[100];
+  int avgSamples = 10;
+  int avgIndex;
 
   int liveData;
   unsigned long liveDataMillis;
@@ -53,15 +62,6 @@ public:
   long minuteData;
 
 private:
-  enum states
-  {
-    MAKEINPUT,
-    CHECKINPUT
-  };
-
-  enum states state;
-
-  long stateTime;
 };
 
 class DoubleSensor
@@ -73,6 +73,11 @@ public:
   int getMinuteData(boolean reset);
 
   void handle();
+
+  void startReading(boolean left);
+  void read(boolean left);
+  void endReading(boolean left);
+  void handleDouble();
 
   void addLiveDataToJson(JsonArray arr);
   void addMinuteDataToJson(JsonArray arr);
