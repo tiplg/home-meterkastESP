@@ -9,11 +9,12 @@ class SimpleSensor
 {
 public:
   SimpleSensor();
-  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, char _sensorName[], long _breukTeller);
+  SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, int _numberOfSamples, char _sensorName[], long _breukTeller);
 
   int getSensorData();
   int getLiveData();
   int getMinuteData(boolean reset);
+  int getSensorAvg(boolean reset);
 
   void startReading();
   void read();
@@ -47,12 +48,14 @@ public:
   int rawSensorData;
   int sensorMin;
   int sensorMax;
+  long sensorAvg;
+  long sensorAvgCount;
   boolean fired;
 
   int sensorData;
   int avg[100];
-  int avgSamples = 10;
-  int avgIndex;
+  int numberOfSamples;
+  int sampleIndex;
 
   int liveData;
   unsigned long liveDataMillis;

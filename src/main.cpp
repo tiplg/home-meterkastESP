@@ -57,16 +57,19 @@ unsigned long otaTimeout = 10 * 1000;
 //TEST reduce to minimum
 int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 
-SimpleSensor zonSensor = SimpleSensor(14, 1500, 1600, false, 1700, (char *)"zon1", 3600000);
-SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, false, 3000, (char *)"water", 3600000);
+SimpleSensor zonSensor = SimpleSensor(14, 1800, 1900, false, 2000, 1, (char *)"zon1", 3600000);
+SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, false, 3000, 10, (char *)"water", 3600000);
 
-DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 818 + 55, 818 + 25, true, 1000, (char *)"vermogenLeft", 1), SimpleSensor(13, 689 + 55, 689 + 25, true, 300, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
+DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 807 + 40, 807 + 10, true, 1000, 3, (char *)"vermogenLeft", 1), SimpleSensor(13, 679 + 40., 679 + 10, true, 1000, 3, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
 //12,13
 // used for timing
 unsigned long currentMillis = 0;
 unsigned long minuteTimestamp = 0;
 unsigned long liveTimestamp = 0;
 unsigned long statTimestamp = 0;
+unsigned long loopSpeedMicros = 0;
+
+long loopCount = 0;
 
 // the setup function runs once when you press reset or power the board
 void setup()
@@ -100,6 +103,8 @@ void setup()
   liveTimestamp = currentMillis;
   statTimestamp = currentMillis;
   otaMillis = currentMillis;
+
+  loopSpeedMicros = micros();
 }
 
 // the loop function runs over and over again forever
@@ -115,7 +120,7 @@ void loop()
 
   PublishLiveData(1 * 1000UL);
   PublishMinuteData(60 * 1000UL);
-  PublishStat(5 * 1000UL);
+  PublishStat(10 * 60 * 1000UL);
 
   ReadSensors();
 
@@ -138,35 +143,36 @@ void ReadSensors()
 {
   for (int i = 0; i < 30; i++)
   {
-    vermogenSensor.startReading(true);
-    for (int i = 0; i < 1000; i++)
+    vermogenSensor.leftSensor.startReading();
+    for (int j = 0; j < vermogenSensor.leftSensor.timeout; j++)
     {
-      vermogenSensor.read(true);
+      vermogenSensor.leftSensor.read();
     }
-    vermogenSensor.endReading(true);
+    vermogenSensor.leftSensor.endReading();
 
-    vermogenSensor.startReading(false);
-    for (int i = 0; i < 1000; i++)
+    vermogenSensor.rightSensor.startReading();
+    for (int j = 0; j < vermogenSensor.rightSensor.timeout; j++)
     {
-      vermogenSensor.read(false);
+      vermogenSensor.rightSensor.read();
     }
-    vermogenSensor.endReading(false);
+    vermogenSensor.rightSensor.endReading();
 
     vermogenSensor.handleDouble();
+
+    if (i % 10 == 0)
+    {
+      zonSensor.startReading();
+      for (int i = 0; i < zonSensor.timeout; i++)
+      {
+        zonSensor.read();
+      }
+      zonSensor.endReading();
+    }
+
+    Serial.printf("%i,%i,0,40,100,%i,%i\n", vermogenSensor.leftSensor.sensorData - 807, vermogenSensor.rightSensor.sensorData - 679, vermogenSensor.leftSensor.fired ? 90 : 10, vermogenSensor.rightSensor.fired ? 91 : 11); //DEBUG
+    //Serial.printf("%i,0,1000,2000,3000\n", zonSensor.sensorData);
+    loopCount++;
   }
-
-  //Serial.printf("%i,%i,0,55,100,%i,%i\n", vermogenSensor.leftSensor.sensorData - 818, vermogenSensor.rightSensor.sensorData - 689, vermogenSensor.leftSensor.fired ? 90 : 10, vermogenSensor.rightSensor.fired ? 91 : 11); //DEBUG
-
-  zonSensor.startReading();
-  for (int i = 0; i < 2000; i++)
-  {
-    zonSensor.read();
-  }
-  zonSensor.endReading();
-
-  Serial.printf("%i,0,2000,%i\n", zonSensor.sensorData, zonSensor.fired ? 1900 : 100);
-
-  //Serial.printf("%i,-100,2800\n", zonSensor.getSensorData());
 }
 
 void PublishLiveData(unsigned long interval)
@@ -234,6 +240,10 @@ void PublishStat(unsigned long interval)
 
     doc["type"] = "stat";
     doc["time"] = timeClient.getEpochTime();
+    doc["loopSpeed"] = (micros() - loopSpeedMicros) / loopCount;
+
+    loopCount = 0;
+    loopSpeedMicros = micros();
 
     JsonArray sensors = doc.createNestedArray("sensors");
 
@@ -245,7 +255,7 @@ void PublishStat(unsigned long interval)
 
     MQTTclient.publish(settingTopic, buffer);
 
-    //Serial.println(buffer);
+    //Serial.println(buffer); //DEBUG
   }
 }
 

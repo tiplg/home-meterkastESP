@@ -7,7 +7,7 @@ SimpleSensor::SimpleSensor()
 {
 }
 
-SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, char _sensorName[], long _breukTeller)
+SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boolean highSet, int _timeout, int _numberOfSamples, char _sensorName[], long _breukTeller)
 {
   //get sensor settings
   sensorPin = _pin;
@@ -28,10 +28,24 @@ SimpleSensor::SimpleSensor(int _pin, int _thresholdSet, int _thresholdReset, boo
   rawSensorData = 0;
   sensorMin = 9999;
   sensorMax = 0;
+  sensorAvg = 0;
+  sensorAvgCount = 0;
   fired = false;
 
-  avgIndex = 0;
+  sampleIndex = 0;
   sensorData = 0;
+
+  if (_numberOfSamples > 0)
+  {
+    numberOfSamples = _numberOfSamples;
+  }
+  else
+  {
+    numberOfSamples = 1;
+  }
+
+  //Serial.printf("samples:%i", numberOfSamples);
+  //numberOfSamples = 10;
 
   //set current time
   liveDataMillis = millis();
@@ -91,7 +105,7 @@ void SimpleSensor::startReading()
     makeHighMicros = micros();
   }
 
-  while (makeHighMicros - micros() < 100)
+  while (micros() - makeHighMicros < 300)
   {
     delayMicroseconds(1);
   }
@@ -119,30 +133,35 @@ void SimpleSensor::endReading()
 {
   if (!readComplete)
   {
-    rawSensorData = 9999;
+    //rawSensorData = timeout;
+    rawSensorData = micros() - startReadingMicros;
   }
 
-  avg[avgIndex] = rawSensorData;
-  avgIndex++;
-  if (avgIndex >= avgSamples)
+  avg[sampleIndex] = rawSensorData; //TODO fill array in read() and if !readComplete
+
+  sampleIndex++;
+  if (sampleIndex >= numberOfSamples)
   {
-    avgIndex = 0;
+    sampleIndex = 0;
   }
 
   sensorData = 0;
 
-  for (int i = 0; i < avgSamples; i++)
+  for (int i = 0; i < numberOfSamples; i++)
   {
     sensorData += avg[i];
   }
 
-  sensorData /= avgSamples;
+  sensorData /= numberOfSamples;
 
   if (sensorData > sensorMax)
     sensorMax = sensorData;
 
   if (sensorData < sensorMin)
     sensorMin = sensorData;
+
+  sensorAvg += sensorData;
+  sensorAvgCount++;
 
   checkThreshold();
   makeHigh();
@@ -184,6 +203,19 @@ int SimpleSensor::getMinuteData(boolean reset)
   return result;
 }
 
+int SimpleSensor::getSensorAvg(boolean reset)
+{
+  int result = sensorAvg / sensorAvgCount;
+
+  if (reset)
+  {
+    sensorAvg = 0;
+    sensorAvgCount = 0;
+  }
+
+  return result;
+}
+
 void SimpleSensor::addLiveDataToJson(JsonArray arr)
 {
   JsonObject obj = arr.createNestedObject();
@@ -204,6 +236,7 @@ void SimpleSensor::addStatToJson(JsonArray arr)
   obj["sensorName"] = sensorName;
   obj["sensorMin"] = sensorMin;
   obj["sensorMax"] = sensorMax;
+  obj["sensorAvg"] = getSensorAvg(true);
 
   sensorMin = 9999;
   sensorMax = 0;
@@ -355,7 +388,7 @@ void DoubleSensor::handleDouble()
 
         liveDataMillis = millis();
       }
-      //Serial.printf("%s, %i , %i\n", sensorName, sensorData, debug++); //DEBUG
+      //Serial.printf("%s, %i , %i\n", sensorName, sensorData, minuteData); //DEBUG
       //Serial.printf("READY\n");                                        //DEBUG
       state = READY;
     }
