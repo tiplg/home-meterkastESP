@@ -60,7 +60,7 @@ int rcTickLimit = 3000; //maximum ticks for the ReadSensor() function
 SimpleSensor zonSensor = SimpleSensor(14, 1800, 1900, false, 2000, 1, (char *)"zon1", 3600000);
 SimpleSensor waterSensor = SimpleSensor(16, 1060, 1480, false, 3000, 10, (char *)"water", 3600000);
 
-DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 807 + 40, 807 + 10, true, 1000, 3, (char *)"vermogenLeft", 1), SimpleSensor(13, 679 + 40., 679 + 10, true, 1000, 3, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
+DoubleSensor vermogenSensor = DoubleSensor(SimpleSensor(12, 807 + 35, 807 + 0, true, 1000, 10, (char *)"vermogenLeft", 1), SimpleSensor(13, 679 + 35., 679 + 0, true, 1000, 10, (char *)"vermogenRight", 1), (char *)"vermogen", 6000000);
 //12,13
 // used for timing
 unsigned long currentMillis = 0;
@@ -135,6 +135,16 @@ void loop()
       otaEnabled = false;
 
       Serial.println("ota disabled");
+
+      StaticJsonDocument<512> doc;
+      char buffer[512];
+
+      doc["type"] = "ota";
+      doc["ready"] = false;
+
+      serializeJson(doc, buffer);
+
+      MQTTclient.publish(settingTopic, buffer);
     }
   }
 }
@@ -169,8 +179,8 @@ void ReadSensors()
       zonSensor.endReading();
     }
 
-    Serial.printf("%i,%i,0,40,100,%i,%i\n", vermogenSensor.leftSensor.sensorData - 807, vermogenSensor.rightSensor.sensorData - 679, vermogenSensor.leftSensor.fired ? 90 : 10, vermogenSensor.rightSensor.fired ? 91 : 11); //DEBUG
-    //Serial.printf("%i,0,1000,2000,3000\n", zonSensor.sensorData);
+    //Serial.printf("%i,%i,-40,35,80,%i,%i\n", vermogenSensor.leftSensor.sensorData - 807, vermogenSensor.rightSensor.sensorData - 679, vermogenSensor.leftSensor.fired ? 75 : 10, vermogenSensor.rightSensor.fired ? 76 : 11); //DEBUG
+    Serial.printf("%i,0,1000,2000,3000\n", zonSensor.sensorData);
     loopCount++;
   }
 }
@@ -320,6 +330,18 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
     if (doc["type"] == "ota")
     {
       Serial.println("ota enabled");
+
+      char buffer[512];
+
+      doc.clear;
+      doc["type"] = "ota";
+      doc["ready"] = true;
+      doc["timeout"] = otaTimeout;
+
+      serializeJson(doc, buffer);
+
+      MQTTclient.publish(settingTopic, buffer);
+
       otaEnabled = true;
       otaMillis = currentMillis;
     }
